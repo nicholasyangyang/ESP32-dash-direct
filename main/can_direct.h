@@ -6,13 +6,14 @@
 // 0x257  DI_speed       speed_kmh
 // 0x118  DI_gear        gear (0=P 1=R 2=N 3=D)
 // 0x306  DI_range       range_km
-// 0x132  BMS_socUI      soc_pct
-// 0x292  BMS_chargeStatus  charging
+// 0x292  BMS_SOC        soc_pct
+// 0x212  BMS_status     charging
 // 0x528  VCFRONT_hvac   temp_outside_c
 // 0x312  BMS_packStatus batt_max_temp_c
 // 0x334  UI_powertrainControl  regen_pct
 // 0x3F5  VCFRONT_vehicleLights low_beam/high_beam/hazard/turn
 // 0x399  DAS_status     ap_engaged
+// 0x219  VCSEC_TPMSData tpms_fl/fr/rl/rr (bar)
 
 typedef struct {
     float   speed_kmh;
@@ -29,6 +30,10 @@ typedef struct {
     bool    turn_right;
     bool    hazard;
     bool    ap_engaged;
+    float   tpms_fl;          // bar, 0=unknown
+    float   tpms_fr;
+    float   tpms_rl;
+    float   tpms_rr;
     bool    can_ok;           // TWAI bus running & receiving frames
 } dashboard_state_t;
 

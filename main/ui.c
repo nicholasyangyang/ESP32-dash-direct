@@ -30,6 +30,9 @@ static lv_obj_t *lbl_temp_out_val = NULL;
 static lv_obj_t *lbl_batt_val     = NULL;
 static lv_obj_t *bar_regen        = NULL;
 
+/* TPMS panel — order: FL, FR, RL, RR */
+static lv_obj_t *lbl_tpms[4] = {NULL};
+
 /* Status bar */
 static lv_obj_t *lbl_icon[7] = {NULL};
 
@@ -84,6 +87,14 @@ static bool icon_active(int idx)
     }
 }
 
+static lv_color_t tpms_color(float bar)
+{
+    if (bar <= 0.0f)            return C_MUTED;   // no data yet
+    if (bar < 2.0f || bar > 3.5f) return C_RED;
+    if (bar < 2.5f || bar > 3.1f) return C_ORANGE;
+    return C_GREEN;
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
  *  ui_refresh  – LVGL timer, 60 Hz
  * ══════════════════════════════════════════════════════════════════════════ */
@@ -123,6 +134,19 @@ static void ui_refresh(lv_timer_t *t)
     for (int i = 0; i < 7; i++) {
         lv_obj_set_style_text_color(lbl_icon[i],
             icon_active(i) ? icon_active_color(i) : C_DARK_GRAY, 0);
+    }
+
+    float tpms_vals[4] = {
+        g_state.tpms_fl, g_state.tpms_fr,
+        g_state.tpms_rl, g_state.tpms_rr
+    };
+    for (int i = 0; i < 4; i++) {
+        if (tpms_vals[i] > 0.0f)
+            snprintf(buf, sizeof(buf), "%.1f", tpms_vals[i]);
+        else
+            snprintf(buf, sizeof(buf), "--");
+        lv_label_set_text(lbl_tpms[i], buf);
+        lv_obj_set_style_text_color(lbl_tpms[i], tpms_color(tpms_vals[i]), 0);
     }
 }
 
@@ -207,10 +231,10 @@ void ui_show_dashboard(void)
     lv_obj_set_style_radius(bar_soc, 4, LV_PART_MAIN);
     lv_obj_set_style_radius(bar_soc, 4, LV_PART_INDICATOR);
 
-    /* ── Right panel (x=182, w=138, h=210) ──────────────────────────────── */
+    /* ── Right panel (x=182, w=76, h=210) ───────────────────────────────── */
     lv_obj_t *right = lv_obj_create(scr_dash);
     lv_obj_set_pos(right, 182, 0);
-    lv_obj_set_size(right, 138, 210);
+    lv_obj_set_size(right, 76, 210);
     lv_obj_set_style_bg_color(right, C_BG, 0);
     lv_obj_set_style_bg_opa(right, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(right, 0, 0);
@@ -261,7 +285,7 @@ void ui_show_dashboard(void)
 
     bar_regen = lv_bar_create(right);
     lv_obj_set_pos(bar_regen, 4, 178);
-    lv_obj_set_size(bar_regen, 126, 14);
+    lv_obj_set_size(bar_regen, 64, 14);
     lv_bar_set_range(bar_regen, 0, 100);
     lv_bar_set_value(bar_regen, 0, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(bar_regen, C_DARK_GRAY, LV_PART_MAIN);
@@ -272,6 +296,78 @@ void ui_show_dashboard(void)
     lv_obj_set_style_bg_opa(bar_regen, LV_OPA_COVER, LV_PART_INDICATOR);
     lv_obj_set_style_bg_grad_color(bar_regen, C_BLUE, LV_PART_INDICATOR);
     lv_obj_set_style_bg_grad_dir(bar_regen, LV_GRAD_DIR_HOR, LV_PART_INDICATOR);
+
+    /* ── TPMS vertical strip (x=260, w=60, h=210) ───────────────────────── */
+    lv_obj_t *tpms_sep = lv_obj_create(scr_dash);
+    lv_obj_set_pos(tpms_sep, 258, 0);
+    lv_obj_set_size(tpms_sep, 2, 210);
+    lv_obj_set_style_bg_color(tpms_sep, C_DARK_GRAY, 0);
+    lv_obj_set_style_bg_opa(tpms_sep, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(tpms_sep, 0, 0);
+    lv_obj_set_style_pad_all(tpms_sep, 0, 0);
+
+    lv_obj_t *tpms = lv_obj_create(scr_dash);
+    lv_obj_set_pos(tpms, 260, 0);
+    lv_obj_set_size(tpms, 60, 210);
+    lv_obj_set_style_bg_color(tpms, C_BG, 0);
+    lv_obj_set_style_bg_opa(tpms, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(tpms, 0, 0);
+    lv_obj_set_style_pad_all(tpms, 0, 0);
+    lv_obj_clear_flag(tpms, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *lbl_tpms_hdr = lv_label_create(tpms);
+    lv_label_set_text(lbl_tpms_hdr, "TPMS");
+    lv_obj_set_style_text_font(lbl_tpms_hdr, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lbl_tpms_hdr, C_MUTED, 0);
+    lv_obj_set_pos(lbl_tpms_hdr, 0, 6);
+    lv_obj_set_width(lbl_tpms_hdr, 60);
+    lv_obj_set_style_text_align(lbl_tpms_hdr, LV_TEXT_ALIGN_CENTER, 0);
+
+    lv_obj_t *lbl_tpms_unit = lv_label_create(tpms);
+    lv_label_set_text(lbl_tpms_unit, "bar");
+    lv_obj_set_style_text_font(lbl_tpms_unit, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lbl_tpms_unit, C_DARK_GRAY, 0);
+    lv_obj_set_pos(lbl_tpms_unit, 0, 22);
+    lv_obj_set_width(lbl_tpms_unit, 60);
+    lv_obj_set_style_text_align(lbl_tpms_unit, LV_TEXT_ALIGN_CENTER, 0);
+
+    /* Front axle label */
+    lv_obj_t *lbl_front = lv_label_create(tpms);
+    lv_label_set_text(lbl_front, "-- FRONT --");
+    lv_obj_set_style_text_font(lbl_front, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lbl_front, C_DARK_GRAY, 0);
+    lv_obj_set_pos(lbl_front, 0, 44);
+    lv_obj_set_width(lbl_front, 60);
+    lv_obj_set_style_text_align(lbl_front, LV_TEXT_ALIGN_CENTER, 0);
+
+    /* FL / FR position labels */
+    static const char *tpms_pos[4] = {"FL", "FR", "RL", "RR"};
+    static const int   tpms_x[4]   = {2, 32, 2, 32};
+    static const int   tpms_y_lbl[4] = {60, 60, 130, 130};
+    static const int   tpms_y_val[4] = {74, 74, 144, 144};
+
+    for (int i = 0; i < 4; i++) {
+        lv_obj_t *lbl_pos = lv_label_create(tpms);
+        lv_label_set_text(lbl_pos, tpms_pos[i]);
+        lv_obj_set_style_text_font(lbl_pos, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(lbl_pos, C_MUTED, 0);
+        lv_obj_set_pos(lbl_pos, tpms_x[i], tpms_y_lbl[i]);
+
+        lbl_tpms[i] = lv_label_create(tpms);
+        lv_label_set_text(lbl_tpms[i], "--");
+        lv_obj_set_style_text_font(lbl_tpms[i], &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(lbl_tpms[i], C_MUTED, 0);
+        lv_obj_set_pos(lbl_tpms[i], tpms_x[i], tpms_y_val[i]);
+    }
+
+    /* Rear axle label */
+    lv_obj_t *lbl_rear = lv_label_create(tpms);
+    lv_label_set_text(lbl_rear, "-- REAR --");
+    lv_obj_set_style_text_font(lbl_rear, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lbl_rear, C_DARK_GRAY, 0);
+    lv_obj_set_pos(lbl_rear, 0, 114);
+    lv_obj_set_width(lbl_rear, 60);
+    lv_obj_set_style_text_align(lbl_rear, LV_TEXT_ALIGN_CENTER, 0);
 
     /* ── Status bar (y=210, h=30) ────────────────────────────────────────── */
     lv_obj_t *sep = lv_obj_create(scr_dash);

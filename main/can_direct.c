@@ -144,6 +144,20 @@ static void parse_frame(uint32_t id, uint8_t dlc, const uint8_t *d)
         }
         break;
 
+    // ── 胎压 ─────────────────────────────────────────────────────────────
+    case 0x219:
+        // VCSEC_TPMSData: byte[0]=index(0=FL,1=FR,2=RL,3=RR), byte[1]=raw*0.025 bar
+        if (dlc >= 2) {
+            float p = d[1] * 0.025f;
+            switch (d[0] & 0x03) {
+                case 0: g_state.tpms_fl = p; break;
+                case 1: g_state.tpms_fr = p; break;
+                case 2: g_state.tpms_rl = p; break;
+                case 3: g_state.tpms_rr = p; break;
+            }
+        }
+        break;
+
     // ── Autopilot 状态 ────────────────────────────────────────────────────
     case 0x399:
         // DAS_autopilotState : 0|4@1+ → byte0 bits[3:0]
