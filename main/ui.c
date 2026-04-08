@@ -331,41 +331,55 @@ void ui_show_dashboard(void)
     lv_obj_set_width(lbl_tpms_unit, 60);
     lv_obj_set_style_text_align(lbl_tpms_unit, LV_TEXT_ALIGN_CENTER, 0);
 
-    /* Front axle label */
+    /* Front axle label — short enough to fit 60px on one line */
     lv_obj_t *lbl_front = lv_label_create(tpms);
-    lv_label_set_text(lbl_front, "-- FRONT --");
+    lv_label_set_text(lbl_front, "Front");
+    lv_label_set_long_mode(lbl_front, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_font(lbl_front, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(lbl_front, C_DARK_GRAY, 0);
-    lv_obj_set_pos(lbl_front, 0, 44);
+    lv_obj_set_pos(lbl_front, 0, 42);
     lv_obj_set_width(lbl_front, 60);
     lv_obj_set_style_text_align(lbl_front, LV_TEXT_ALIGN_CENTER, 0);
 
-    /* FL / FR position labels */
-    static const char *tpms_pos[4] = {"FL", "FR", "RL", "RR"};
-    static const int   tpms_x[4]   = {2, 32, 2, 32};
-    static const int   tpms_y_lbl[4] = {60, 60, 130, 130};
-    static const int   tpms_y_val[4] = {74, 74, 144, 144};
+    /* FL / FR / RL / RR labels and values
+     * Layout (each row 16px line-height):
+     *  y=42  "Front"
+     *  y=60  FL(x=2)   FR(x=32)   ← position label
+     *  y=76  val(x=2)  val(x=32)  ← pressure value
+     *  y=108 "Rear"
+     *  y=126 RL(x=2)   RR(x=32)
+     *  y=142 val(x=2)  val(x=32)
+     */
+    static const char *tpms_pos[4]   = {"FL", "FR", "RL", "RR"};
+    static const int   tpms_x[4]     = {2, 32, 2, 32};
+    static const int   tpms_y_lbl[4] = {60, 60, 126, 126};
+    static const int   tpms_y_val[4] = {76, 76, 142, 142};
 
     for (int i = 0; i < 4; i++) {
         lv_obj_t *lbl_pos = lv_label_create(tpms);
         lv_label_set_text(lbl_pos, tpms_pos[i]);
+        lv_label_set_long_mode(lbl_pos, LV_LABEL_LONG_CLIP);
         lv_obj_set_style_text_font(lbl_pos, &lv_font_montserrat_12, 0);
         lv_obj_set_style_text_color(lbl_pos, C_MUTED, 0);
         lv_obj_set_pos(lbl_pos, tpms_x[i], tpms_y_lbl[i]);
+        lv_obj_set_width(lbl_pos, 28);
 
         lbl_tpms[i] = lv_label_create(tpms);
         lv_label_set_text(lbl_tpms[i], "--");
+        lv_label_set_long_mode(lbl_tpms[i], LV_LABEL_LONG_CLIP);
         lv_obj_set_style_text_font(lbl_tpms[i], &lv_font_montserrat_12, 0);
         lv_obj_set_style_text_color(lbl_tpms[i], C_MUTED, 0);
         lv_obj_set_pos(lbl_tpms[i], tpms_x[i], tpms_y_val[i]);
+        lv_obj_set_width(lbl_tpms[i], 28);
     }
 
     /* Rear axle label */
     lv_obj_t *lbl_rear = lv_label_create(tpms);
-    lv_label_set_text(lbl_rear, "-- REAR --");
+    lv_label_set_text(lbl_rear, "Rear");
+    lv_label_set_long_mode(lbl_rear, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_font(lbl_rear, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(lbl_rear, C_DARK_GRAY, 0);
-    lv_obj_set_pos(lbl_rear, 0, 114);
+    lv_obj_set_pos(lbl_rear, 0, 108);
     lv_obj_set_width(lbl_rear, 60);
     lv_obj_set_style_text_align(lbl_rear, LV_TEXT_ALIGN_CENTER, 0);
 
