@@ -11,50 +11,63 @@
 
 dashboard_state_t g_state = {0};
 
-// ── Frame parsing — HW4, aligned with model3dbc/Model3CAN.dbc ────────────
+// ── Frame parsing — HW4, joshwardell/model3dbc + tesla-can-explorer ──────
 //
-// 0x257  DI_speedChecksum   :  0| 8@1+  (1,0)
-//        DI_speedCounter    :  8| 4@1+  (1,0)
-//        DI_vehicleSpeed    : 12|12@1+  (0.08,-40)  kph  ← precise speed
-//        DI_uiSpeedUnits    : 33| 1@1+  (1,0)        0=mph 1=kph
-//        DI_uiSpeed         : 24| 9@1+  (1,0)        UI display integer
-//        DI_uiSpeedHighSpeed: 34| 9@1+  (1,0)
+// 0x257  DI_speed (599):
+//        DI_speedChecksum  :  0| 8@1+  (1,0)
+//        DI_speedCounter   :  8| 4@1+  (1,0)
+//        DI_vehicleSpeed   : 12|12@1+  (0.08,-40)  kph  ← precise
+//        DI_uiSpeed        : 24| 8@1+  (1,0)             UI integer
+//        DI_uiSpeedUnits   : 32| 1@1+  (1,0)        0=mph 1=kph
 //
-// 0x118  DI_systemStatusChecksum : 0|8@1+
-//        DI_systemStatusCounter  : 8|4@1+
-//        DI_gear                 :21|3@1+  (1,0)  0=P 1=R 2=N 3=D
+// 0x118  DI_systemStatus (280):
+//        DI_gear           : 21|3@1+  (1,0)  0=SNA 1=P 2=R 3=N 4=D
 //
-// 0x252  DI_state (decimal 594):
-//        DI_uiRange :  0|12@1+ (0.1,0) "km or miles"
+// 0x33A  UI_range (826)  ← 续航里程 + 电量百分比
+//        UI_Range          :  0|10@1+  (1,0)  "mi"  UI rated range
+//        UI_idealRange     : 16|10@1+  (1,0)  "mi"  ideal range
+//        UI_ratedWHpM      : 32|10@1+  (1,0)  "WHpM"
+//        UI_SOC            : 48| 7@1+  (1,0)  "%"   ← display SOC integer
+//        UI_uSOE           : 56| 7@1+  (1,0)  "%"
 //
-
-// 0x292  BMS_SOC (decimal 658 in DBC):
-//        SOCmin292  :  0|10@1+  (0.1,0) "%"
-//        SOCUI292   : 10|10@1+  (0.1,0) "%"   ← display SOC
-//        SOCave292  : 30|10@1+  (0.1,0) "%"
+// 0x292  BMS_socStatus (658)  ← 电量百分比 backup
+//        SOCmin292         :  0|10@1+  (0.1,0) "%"
+//        SOCUI292          : 10|10@1+  (0.1,0) "%"   ← display SOC (0.1% res)
+//        SOCmax292         : 20|10@1+  (0.1,0) "%"
+//        SOCave292         : 30|10@1+  (0.1,0) "%"
+//        BattBeginningOfLifeEnergy292 : 40|10@1+ (0.1,0) "kWh"
+//        BMS_battTempPct   : 50| 8@1+  (0.4,0) "%"
 //
-// 0x212  BMS_status (decimal 530):
-//        BMS_chargeRequest : 29|1@1+           ← charging flag
+// 0x252  BMS_powerAvailable (594)  ← 能量回收
+//        BMS_maxRegenPower      :  0|16@1+  (0.01,0)  [0|655.35] "kW"  ← 回收
+//        BMS_maxDischargePower  : 16|16@1+  (0.013,0) [0|655.35] "kW"
+//        BMS_maxStationaryHeatPower : 32|10@1+ (0.01,0) "kW"
+//        BMS_notEnoughPowerForHeatPump : 42|1@1+
+//        BMS_powerLimitsState   : 48| 1@1+  0=not_calc 1=calc_for_drive
 //
-// 0x528  UnixTime in DBC — but community-verified hvac:
+// 0x212  BMS_status (530):
+//        BMS_chargeRequest  : 29|1@1+           ← charging flag
+//
+// 0x528  VCFRONT_hvac — community verified:
 //        byte[2] = outside temp (int8, °C)
 //
-// 0x312  BMSthermal (decimal 786):
+// 0x312  BMS_packStatus (786):
 //        BMSmaxPackTemperature : 53|9@1+ (0.25,-25) "C"
 //
-// 0x334  UI_powertrainControl (decimal 820):
-//        UI_regenTorqueMax : 24|8@1+ (0.5,0) "%"   ← byte[3]
+// 0x334  UI_powertrainControl (820)  ← 能量回收设定
+//        UI_regenTorqueMax : 24|8@1+  (0.5,0) [0|100] "%"  ← byte[3]
+//        UI_stoppingMode   : 40|2@1+  0=STANDARD 1=CREEP 2=HOLD
 //
-// 0x3F5  VCFRONT_lighting (decimal 1013):
-//        VCFRONT_lowBeamLeftStatus  : 28|2@1+
-//        VCFRONT_lowBeamRightStatus : 30|2@1+
-//        VCFRONT_highBeamLeftStatus : 32|2@1+
-//        VCFRONT_highBeamRightStatus: 34|2@1+
-//        VCFRONT_hazardLightRequest :  4|4@1+  (!=0 → hazard)
-//        VCFRONT_indicatorLeftRequest : 0|2@1+ (1=on)
-//        VCFRONT_indicatorRightRequest: 2|2@1+ (1=on)
+// 0x3F5  VCFRONT_vehicleLights (1013):
+//        VCFRONT_indicatorLeftRequest  :  0|2@1+  (1=on)
+//        VCFRONT_indicatorRightRequest :  2|2@1+  (1=on)
+//        VCFRONT_hazardLightRequest    :  4|4@1+  (!=0 → hazard)
+//        VCFRONT_lowBeamLeftStatus     : 28|2@1+
+//        VCFRONT_lowBeamRightStatus    : 30|2@1+
+//        VCFRONT_highBeamLeftStatus    : 32|2@1+
+//        VCFRONT_highBeamRightStatus   : 34|2@1+
 //
-// 0x399  DAS_status (decimal 921):
+// 0x399  DAS_status (921):
 //        DAS_autopilotState : 0|4@1+  3/4/5 = engaged
 
 static void parse_frame(uint32_t id, uint8_t dlc, const uint8_t *d)
@@ -63,17 +76,15 @@ static void parse_frame(uint32_t id, uint8_t dlc, const uint8_t *d)
 
     // ── 车速 ─────────────────────────────────────────────────────────────
     case 0x257:
-        // DI_uiSpeed      : 24|9@1+ (1,0)          → UI 显示速度整数（mph 或 kph）
-        // DI_uiSpeedUnits : 33|1@1+ 0=mph 1=kph
+        // DI_uiSpeed      : 24|8@1+ (1,0)      → UI 显示速度整数（mph 或 kph）
+        // DI_uiSpeedUnits : 32|1@1+ 0=mph 1=kph
         // DI_vehicleSpeed : 12|12@1+ (0.08,-40) kph → 精确速度
         if (dlc >= 5) {
-            uint16_t raw_ui = (uint16_t)d[3] | ((uint16_t)(d[4] & 0x01) << 8);
-            uint8_t  units  = (d[4] >> 1) & 0x01;   // bit33: 0=mph 1=kph
-            // 精确速度（始终 kph）
+            uint8_t  raw_ui = d[3];                   // bits 24|8
+            uint8_t  units  = d[4] & 0x01;            // bit32: 0=mph 1=kph
             uint16_t raw_v  = ((uint16_t)d[1] >> 4) | ((uint16_t)d[2] << 4);
             float    v_kph  = raw_v * 0.08f - 40.0f;
             if (v_kph < 0.0f) v_kph = 0.0f;
-            // 仪表如设 mph 则 uiSpeed 是 mph 值，换算成 kph 显示
             g_state.speed_kmh = (units == 0) ? (raw_ui * 1.60934f) : (float)raw_ui;
             ESP_LOGD(TAG, "0x257 uiSpeed=%u units=%s v_kph=%.1f → show=%.0f  [%02X %02X %02X %02X %02X]",
                      raw_ui, units ? "kph" : "mph", v_kph, g_state.speed_kmh,
@@ -125,13 +136,15 @@ static void parse_frame(uint32_t id, uint8_t dlc, const uint8_t *d)
         }
         break;
 
-    // ── 续航里程备用: 0x252 DI_state ──────────────────────────────────────
+    // ── 最大回收功率 (能量回收): 0x252 BMS_powerAvailable ─────────────────
+    // BMS_maxRegenPower     :  0|16@1+ (0.01,0) [0|655.35] "kW"  ← bytes[0-1]
+    // BMS_maxDischargePower : 16|16@1+ (0.013,0)           "kW"  ← bytes[2-3]
     case 0x252:
         if (dlc >= 2) {
-            uint16_t raw = (uint16_t)d[0] | ((uint16_t)(d[1] & 0x0F) << 8);
-            if (raw > 0 && g_state.range_km == 0.0f)
-                g_state.range_km = raw * 0.1f;
-            ESP_LOGI(TAG, "0x252 range_raw=%u → %.1f  [%02X %02X]", raw, raw * 0.1f, d[0], d[1]);
+            uint16_t raw_regen = (uint16_t)d[0] | ((uint16_t)d[1] << 8);
+            g_state.regen_kw = raw_regen * 0.01f;
+            ESP_LOGD(TAG, "0x252 maxRegenPower_raw=%u → %.1f kW  [%02X %02X]",
+                     raw_regen, g_state.regen_kw, d[0], d[1]);
         }
         break;
 
@@ -242,7 +255,7 @@ static void can_rx_task(void *arg)
     (void)arg;
     uint32_t last_rx_tick  = 0;
     uint32_t last_stat_tick = 0;
-    uint32_t cnt_total = 0, cnt_33a = 0, cnt_292 = 0, cnt_252 = 0, cnt_257 = 0, cnt_118 = 0;
+    uint32_t cnt_total = 0, cnt_33a = 0, cnt_292 = 0, cnt_252 = 0, cnt_257 = 0, cnt_118 = 0, cnt_334 = 0;
 
     for (;;) {
         twai_message_t msg;
@@ -253,6 +266,7 @@ static void can_rx_task(void *arg)
             if (msg.identifier == 0x252) cnt_252++;
             if (msg.identifier == 0x257) cnt_257++;
             if (msg.identifier == 0x118) cnt_118++;
+            if (msg.identifier == 0x334) cnt_334++;
             parse_frame(msg.identifier, msg.data_length_code, msg.data);
             last_rx_tick   = xTaskGetTickCount();
             g_state.can_ok = true;
@@ -262,11 +276,13 @@ static void can_rx_task(void *arg)
             if ((now - last_stat_tick) >= pdMS_TO_TICKS(5000)) {
                 last_stat_tick = now;
                 ESP_LOGI(TAG, "CAN stats: total=%lu  0x257=%lu  0x118=%lu"
-                              "  0x33A(range+SOC)=%lu  0x292(SOC bak)=%lu  0x252(range bak)=%lu"
-                              "  → SOC=%.0f%%  range=%.0f",
-                         cnt_total, cnt_257, cnt_118, cnt_33a, cnt_292, cnt_252,
-                         g_state.soc_pct, g_state.range_km);
-                cnt_total = cnt_33a = cnt_292 = cnt_252 = cnt_257 = cnt_118 = 0;
+                              "  0x33A(range+SOC)=%lu  0x292(SOC bak)=%lu"
+                              "  0x252(regenPow)=%lu  0x334(regenSet)=%lu"
+                              "  → SOC=%.0f%%  range=%.0f  regenPow=%.1fkW  regenSet=%.0f%%",
+                         cnt_total, cnt_257, cnt_118, cnt_33a, cnt_292, cnt_252, cnt_334,
+                         g_state.soc_pct, g_state.range_km,
+                         g_state.regen_kw, g_state.regen_pct);
+                cnt_total = cnt_33a = cnt_292 = cnt_252 = cnt_257 = cnt_118 = cnt_334 = 0;
             }
         } else {
             if ((xTaskGetTickCount() - last_rx_tick) > pdMS_TO_TICKS(2000))

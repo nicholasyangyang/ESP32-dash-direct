@@ -29,6 +29,7 @@ static lv_obj_t *lbl_range_val    = NULL;
 static lv_obj_t *lbl_temp_out_val = NULL;
 static lv_obj_t *lbl_batt_val     = NULL;
 static lv_obj_t *bar_regen        = NULL;
+static lv_obj_t *lbl_regen_val    = NULL;
 
 /* TPMS panel — order: FL, FR, RL, RR */
 static lv_obj_t *lbl_tpms[4] = {NULL};
@@ -129,7 +130,15 @@ static void ui_refresh(lv_timer_t *t)
     snprintf(buf, sizeof(buf), "%.0f°C", g_state.batt_max_temp_c);
     lv_label_set_text(lbl_batt_val, buf);
 
-    lv_bar_set_value(bar_regen, (int)g_state.regen_pct, LV_ANIM_OFF);
+    // bar_regen: 0–200 kW range, driven by actual max regen power (BMS_powerAvailable)
+    int regen_bar_val = (int)g_state.regen_kw;
+    if (regen_bar_val > 200) regen_bar_val = 200;
+    lv_bar_set_value(bar_regen, regen_bar_val, LV_ANIM_OFF);
+    if (g_state.regen_kw > 0.5f)
+        snprintf(buf, sizeof(buf), "%.0fkW", g_state.regen_kw);
+    else
+        snprintf(buf, sizeof(buf), "--");
+    lv_label_set_text(lbl_regen_val, buf);
 
     for (int i = 0; i < 7; i++) {
         lv_obj_set_style_text_color(lbl_icon[i],
@@ -281,12 +290,18 @@ void ui_show_dashboard(void)
     lv_label_set_text(lbl_regen_key, LV_SYMBOL_LEFT " Regen");
     lv_obj_set_style_text_font(lbl_regen_key, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(lbl_regen_key, C_MUTED, 0);
-    lv_obj_set_pos(lbl_regen_key, 4, 160);
+    lv_obj_set_pos(lbl_regen_key, 4, 156);
+
+    lbl_regen_val = lv_label_create(right);
+    lv_label_set_text(lbl_regen_val, "--");
+    lv_obj_set_style_text_font(lbl_regen_val, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lbl_regen_val, C_GREEN, 0);
+    lv_obj_set_pos(lbl_regen_val, 4, 170);
 
     bar_regen = lv_bar_create(right);
-    lv_obj_set_pos(bar_regen, 4, 178);
+    lv_obj_set_pos(bar_regen, 4, 186);
     lv_obj_set_size(bar_regen, 64, 14);
-    lv_bar_set_range(bar_regen, 0, 100);
+    lv_bar_set_range(bar_regen, 0, 200);  // 0–200 kW
     lv_bar_set_value(bar_regen, 0, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(bar_regen, C_DARK_GRAY, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(bar_regen, LV_OPA_COVER, LV_PART_MAIN);
