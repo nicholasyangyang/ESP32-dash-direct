@@ -12,7 +12,7 @@
 // 0x292  BMS_socStatus           soc_pct   (SOCUI292 10|10@1+ (0.1,0)) ← backup SOC
 // 0x252  BMS_powerAvailable      regen_kw  (BMS_maxRegenPower 0|16@1+ (0.01,0) kW)
 // 0x212  BMS_status              charging  (BMS_chargeRequest 29|1)
-// 0x528  VCFRONT_hvac            temp_outside_c
+// 0x321  VCFRONT_sensors         temp_outside_c (VCFRONT_tempAmbient 24|8@1+ (0.5,-40))
 // 0x312  BMS_packStatus          batt_max_temp_c
 // 0x334  UI_powertrainControl    regen_pct (UI_regenTorqueMax 24|8@1+ (0.5,0) %)
 // 0x3F5  VCFRONT_vehicleLights   low_beam/high_beam/hazard/turn

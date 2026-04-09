@@ -48,8 +48,9 @@ dashboard_state_t g_state = {0};
 // 0x212  BMS_status (530):
 //        BMS_chargeRequest  : 29|1@1+           ← charging flag
 //
-// 0x528  VCFRONT_hvac — community verified:
-//        byte[2] = outside temp (int8, °C)
+// 0x321  VCFRONT_sensors (801):
+//        VCFRONT_tempAmbient         : 24|8@1+  (0.5,-40) "C"  ← 车外温度
+//        VCFRONT_tempAmbientFiltered : 40|8@1+  (0.5,-40) "C"
 //
 // 0x312  BMS_packStatus (786):
 //        BMSmaxPackTemperature : 53|9@1+ (0.25,-25) "C"
@@ -76,12 +77,12 @@ static void parse_frame(uint32_t id, uint8_t dlc, const uint8_t *d)
 
     // ── 车速 ─────────────────────────────────────────────────────────────
     case 0x257:
-        // DI_uiSpeed      : 24|8@1+ (1,0)      → UI 显示速度整数（mph 或 kph）
-        // DI_uiSpeedUnits : 32|1@1+ 0=mph 1=kph
+        // DI_uiSpeed      : 24|9@1+ (1,0)      → UI 显示速度整数（mph 或 kph），9-bit
+        // DI_uiSpeedUnits : 33|1@1+ 0=mph 1=kph
         // DI_vehicleSpeed : 12|12@1+ (0.08,-40) kph → 精确速度
         if (dlc >= 5) {
-            uint8_t  raw_ui = d[3];                   // bits 24|8
-            uint8_t  units  = d[4] & 0x01;            // bit32: 0=mph 1=kph
+            uint16_t raw_ui = (uint16_t)d[3] | ((uint16_t)(d[4] & 0x01) << 8);  // bits 24|9
+            uint8_t  units  = (d[4] >> 1) & 0x01;     // bit33: 0=mph 1=kph
             uint16_t raw_v  = ((uint16_t)d[1] >> 4) | ((uint16_t)d[2] << 4);
             float    v_kph  = raw_v * 0.08f - 40.0f;
             if (v_kph < 0.0f) v_kph = 0.0f;
@@ -156,10 +157,10 @@ static void parse_frame(uint32_t id, uint8_t dlc, const uint8_t *d)
         break;
 
     // ── 车外温度 ──────────────────────────────────────────────────────────
-    case 0x528:
-        // 社区验证：byte[2] = 外部温度 int8 °C
-        if (dlc >= 3)
-            g_state.temp_outside_c = (float)(int8_t)d[2];
+    case 0x321:
+        // VCFRONT_sensors (dec 801): VCFRONT_tempAmbient : 24|8@1+ (0.5,-40) "C"
+        if (dlc >= 4)
+            g_state.temp_outside_c = d[3] * 0.5f - 40.0f;
         break;
 
     // ── 电池最高温度 ──────────────────────────────────────────────────────

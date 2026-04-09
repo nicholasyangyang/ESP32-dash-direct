@@ -118,9 +118,9 @@ CAN 帧 → twai_receive() → parse_frame() → g_state → lv_timer → 屏幕
 
 | 信号 | 位域 | 解析 | 说明 |
 |------|------|------|------|
-| `DI_uiSpeed` | `24\|8@1+` | `d[3]` | UI 显示整数（mph 或 kph） |
-| `DI_uiSpeedUnits` | `32\|1@1+` | `d[4] & 0x01` | `0`=mph `1`=kph |
-| `DI_vehicleSpeed` | `12\|12@1+` | `raw * 0.08 - 40.0` kph | 精确速度 |
+| `DI_uiSpeed` | `24\|9@1+` | `d[3] \| ((d[4] & 0x01) << 8)` | UI 显示整数（mph 或 kph），9-bit |
+| `DI_uiSpeedUnits` | `33\|1@1+` | `(d[4] >> 1) & 0x01` | `0`=mph `1`=kph |
+| `DI_vehicleSpeed` | `12\|12@1+` | `raw * 0.08 - 40.0` kph | 精确速度（未使用） |
 
 如仪表单位为 mph，则 `speed_kmh = uiSpeed × 1.60934`，否则直接取整数值。
 
@@ -206,11 +206,16 @@ CAN 帧 → twai_receive() → parse_frame() → g_state → lv_timer → 屏幕
 
 ---
 
-### 车外温度 — `0x528` VCFRONT_hvac
+### 车外温度 — `0x321` VCFRONT_sensors (dec 801)
 
-| 字节 | 说明 | 解析 |
-|------|------|------|
-| `d[2]` | 外部温度（有符号字节） | `(int8_t)d[2]` °C |
+> `0x528` 帧为 `UnixTime`（Unix 时间戳），**不含温度**。
+
+| 信号 | 位域 | 解析 | 说明 |
+|------|------|------|------|
+| `VCFRONT_tempAmbient` | `24\|8@1+` | `d[3] * 0.5 - 40.0` °C | 环境温度 |
+| `VCFRONT_tempAmbientFiltered` | `40\|8@1+` | `d[5] * 0.5 - 40.0` °C | 滤波后（未使用） |
+
+范围：−40 ~ +80 °C，精度 0.5 °C。
 
 ---
 
@@ -273,7 +278,7 @@ CAN 帧 → twai_receive() → parse_frame() → g_state → lv_timer → 屏幕
 | `range_km` | float | 0x33A | 续航里程（km 或 mi，与车辆单位一致） |
 | `soc_pct` | float | 0x33A / 0x292 | 电量百分比 % |
 | `charging` | bool | 0x212 | 是否充电中 |
-| `temp_outside_c` | float | 0x528 | 车外温度 °C |
+| `temp_outside_c` | float | 0x321 | 车外温度 °C（VCFRONT_tempAmbient） |
 | `batt_max_temp_c` | float | 0x312 | 电池最高温度 °C |
 | `regen_kw` | float | 0x252 | **最大回收功率 kW**（BMS_maxRegenPower） |
 | `regen_pct` | float | 0x334 | 回收扭矩限制设定 % |
