@@ -4,8 +4,8 @@
 
 // ── HW4 CAN IDs decoded by this module ───────────────────────────────────
 // 0x257  DI_speed       speed_kmh
-// 0x118  DI_gear        gear (0=P 1=R 2=N 3=D)
-// 0x306  DI_range       range_km
+// 0x118  DI_gear        gear (0=P 1=R 2=N 3=D, 0xFF=invalid)
+// 0x252  DI_state       range_km (DI_uiRange)
 // 0x292  BMS_SOC        soc_pct
 // 0x212  BMS_status     charging
 // 0x528  VCFRONT_hvac   temp_outside_c

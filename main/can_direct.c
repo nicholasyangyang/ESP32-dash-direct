@@ -24,8 +24,10 @@ dashboard_state_t g_state = {0};
 //        DI_systemStatusCounter  : 8|4@1+
 //        DI_gear                 :21|3@1+  (1,0)  0=P 1=R 2=N 3=D
 //
-// 0x306  (custom — not in model3dbc) range_km * 10 LE byte[0..1]
+// 0x252  DI_state (decimal 594):
+//        DI_uiRange :  0|12@1+ (0.1,0) "km or miles"
 //
+
 // 0x292  BMS_SOC (decimal 658 in DBC):
 //        SOCmin292  :  0|10@1+  (0.1,0) "%"
 //        SOCUI292   : 10|10@1+  (0.1,0) "%"   ← display SOC
@@ -61,36 +63,75 @@ static void parse_frame(uint32_t id, uint8_t dlc, const uint8_t *d)
 
     // ── 车速 ─────────────────────────────────────────────────────────────
     case 0x257:
-        // DI_uiSpeed : 24|9@1+ (1,0) — 直接是仪表显示速度整数值
+        // DI_uiSpeed      : 24|9@1+ (1,0)          → UI 显示速度整数（mph 或 kph）
+        // DI_uiSpeedUnits : 33|1@1+ 0=mph 1=kph
+        // DI_vehicleSpeed : 12|12@1+ (0.08,-40) kph → 精确速度
         if (dlc >= 5) {
-            uint16_t raw = (uint16_t)d[3] | ((uint16_t)(d[4] & 0x01) << 8);
-            g_state.speed_kmh = (float)raw;
+            uint16_t raw_ui = (uint16_t)d[3] | ((uint16_t)(d[4] & 0x01) << 8);
+            uint8_t  units  = (d[4] >> 1) & 0x01;   // bit33: 0=mph 1=kph
+            // 精确速度（始终 kph）
+            uint16_t raw_v  = ((uint16_t)d[1] >> 4) | ((uint16_t)d[2] << 4);
+            float    v_kph  = raw_v * 0.08f - 40.0f;
+            if (v_kph < 0.0f) v_kph = 0.0f;
+            // 仪表如设 mph 则 uiSpeed 是 mph 值，换算成 kph 显示
+            g_state.speed_kmh = (units == 0) ? (raw_ui * 1.60934f) : (float)raw_ui;
+            ESP_LOGD(TAG, "0x257 uiSpeed=%u units=%s v_kph=%.1f → show=%.0f  [%02X %02X %02X %02X %02X]",
+                     raw_ui, units ? "kph" : "mph", v_kph, g_state.speed_kmh,
+                     d[0], d[1], d[2], d[3], d[4]);
         }
         break;
 
     // ── 档位 ─────────────────────────────────────────────────────────────
     case 0x118:
         // DI_gear : 21|3@1+ → bit21 = byte2.bit5
-        if (dlc >= 3)
-            g_state.gear = (d[2] >> 5) & 0x07;
-        break;
-
-    // ── 续航里程（自定义帧，非model3dbc标准）────────────────────────────
-    case 0x306:
-        if (dlc >= 2) {
-            uint16_t raw = (uint16_t)d[0] | ((uint16_t)d[1] << 8);
-            g_state.range_km = raw * 0.1f;
+        // DBC: 0=SNA 1=P 2=R 3=N 4=D  →  存为 0-based: 0=P 1=R 2=N 3=D, 0xFF=无效
+        if (dlc >= 3) {
+            uint8_t raw_gear = (d[2] >> 5) & 0x07;
+            g_state.gear = (raw_gear >= 1 && raw_gear <= 4) ? (raw_gear - 1) : 0xFF;
+            ESP_LOGD(TAG, "0x118 gear raw=%u → gear=%u  [%02X %02X %02X]",
+                     raw_gear, g_state.gear, d[0], d[1], d[2]);
         }
         break;
 
-    // ── 电池 SOC ─────────────────────────────────────────────────────────
+    // ── 续航里程 + SOC UI 显示值 ──────────────────────────────────────────
+    // 0x33A  ID33AUI_rangeSOC (decimal 826):
+    //   UI_Range      :  0|10@1+ (1,0)  → 仪表显示里程（与车辆单位一致 km/mi）
+    //   UI_idealRange : 16|10@1+ (1,0)  → 理想里程
+    //   UI_SOC        : 48| 7@1+ (1,0) "%"  → 显示电量整数 0-100
+    case 0x33A:
+        if (dlc >= 7) {
+            uint16_t raw_range = (uint16_t)d[0] | ((uint16_t)(d[1] & 0x03) << 8);
+            uint8_t  raw_soc   = d[6] & 0x7F;
+            if (raw_range > 0)
+                g_state.range_km = (float)raw_range;
+            if (raw_soc > 0)
+                g_state.soc_pct = (float)raw_soc;
+            ESP_LOGI(TAG, "0x33A range=%u(%.0f) soc=%u%%  [%02X %02X .. %02X %02X]",
+                     raw_range, g_state.range_km, raw_soc,
+                     d[0], d[1], d[6], d[7]);
+        }
+        break;
+
+    // ── 电池 SOC (备用: 0x292 BMS_SOC) ───────────────────────────────────
+    // SOCUI292 : 10|10@1+ (0.1,0) — HW4 可能不广播此帧
     case 0x292:
-        // SOCUI292 : 10|10@1+ (0.1,0) "%" — bit10起10位
-        // byte1.bits[7:2] (6位低) | byte2.bits[3:0] (4位高) → 10位
         if (dlc >= 3) {
-            uint16_t raw = (uint16_t)((d[1] >> 2) & 0x3F)
-                         | ((uint16_t)(d[2] & 0x0F) << 6);
-            g_state.soc_pct = raw * 0.1f;
+            uint16_t raw_ui = (uint16_t)((d[1] >> 2) & 0x3F)
+                            | ((uint16_t)(d[2] & 0x0F) << 6);
+            if (raw_ui > 0 && g_state.soc_pct == 0.0f)
+                g_state.soc_pct = raw_ui * 0.1f;
+            ESP_LOGI(TAG, "0x292 SOCui_raw=%u → %.1f%%  [%02X %02X %02X]",
+                     raw_ui, raw_ui * 0.1f, d[0], d[1], d[2]);
+        }
+        break;
+
+    // ── 续航里程备用: 0x252 DI_state ──────────────────────────────────────
+    case 0x252:
+        if (dlc >= 2) {
+            uint16_t raw = (uint16_t)d[0] | ((uint16_t)(d[1] & 0x0F) << 8);
+            if (raw > 0 && g_state.range_km == 0.0f)
+                g_state.range_km = raw * 0.1f;
+            ESP_LOGI(TAG, "0x252 range_raw=%u → %.1f  [%02X %02X]", raw, raw * 0.1f, d[0], d[1]);
         }
         break;
 
@@ -136,11 +177,21 @@ static void parse_frame(uint32_t id, uint8_t dlc, const uint8_t *d)
         // VCFRONT_highBeamLeftStatus    : 32|2@1+  byte4 bits[1:0]
         // VCFRONT_highBeamRightStatus   : 34|2@1+  byte4 bits[3:2]
         if (dlc >= 7) {
-            g_state.turn_left  = (d[0] & 0x03) == 1;
-            g_state.turn_right = ((d[0] >> 2) & 0x03) == 1;
-            g_state.hazard     = ((d[0] >> 4) & 0x0F) != 0;
-            g_state.low_beam   = ((d[3] >> 4) & 0x03) == 1 || ((d[3] >> 6) & 0x03) == 1;
-            g_state.high_beam  = ((d[4] >> 0) & 0x03) == 1 || ((d[4] >> 2) & 0x03) == 1;
+            uint8_t ind_l  = (d[0] >> 0) & 0x03;   // bit 0|2
+            uint8_t ind_r  = (d[0] >> 2) & 0x03;   // bit 2|2
+            uint8_t haz    = (d[0] >> 4) & 0x0F;   // bit 4|4
+            uint8_t lo_l   = (d[3] >> 4) & 0x03;   // bit 28|2
+            uint8_t lo_r   = (d[3] >> 6) & 0x03;   // bit 30|2
+            uint8_t hi_l   = (d[4] >> 0) & 0x03;   // bit 32|2
+            uint8_t hi_r   = (d[4] >> 2) & 0x03;   // bit 34|2
+            g_state.turn_left  = ind_l == 1;
+            g_state.turn_right = ind_r == 1;
+            g_state.hazard     = haz != 0;
+            g_state.low_beam   = lo_l == 1 || lo_r == 1;
+            g_state.high_beam  = hi_l == 1 || hi_r == 1;
+            ESP_LOGD(TAG, "0x3F5 indL=%u indR=%u haz=%u loL=%u loR=%u hiL=%u hiR=%u  [%02X %02X %02X %02X %02X]",
+                     ind_l, ind_r, haz, lo_l, lo_r, hi_l, hi_r,
+                     d[0], d[1], d[2], d[3], d[4]);
         }
         break;
 
@@ -189,14 +240,34 @@ static esp_err_t twai_install_and_start(void)
 static void can_rx_task(void *arg)
 {
     (void)arg;
-    uint32_t last_rx_tick = 0;
+    uint32_t last_rx_tick  = 0;
+    uint32_t last_stat_tick = 0;
+    uint32_t cnt_total = 0, cnt_33a = 0, cnt_292 = 0, cnt_252 = 0, cnt_257 = 0, cnt_118 = 0;
 
     for (;;) {
         twai_message_t msg;
         if (twai_receive(&msg, pdMS_TO_TICKS(200)) == ESP_OK) {
+            cnt_total++;
+            if (msg.identifier == 0x33A) cnt_33a++;
+            if (msg.identifier == 0x292) cnt_292++;
+            if (msg.identifier == 0x252) cnt_252++;
+            if (msg.identifier == 0x257) cnt_257++;
+            if (msg.identifier == 0x118) cnt_118++;
             parse_frame(msg.identifier, msg.data_length_code, msg.data);
             last_rx_tick   = xTaskGetTickCount();
             g_state.can_ok = true;
+
+            // 每 5 秒打印一次统计
+            uint32_t now = xTaskGetTickCount();
+            if ((now - last_stat_tick) >= pdMS_TO_TICKS(5000)) {
+                last_stat_tick = now;
+                ESP_LOGI(TAG, "CAN stats: total=%lu  0x257=%lu  0x118=%lu"
+                              "  0x33A(range+SOC)=%lu  0x292(SOC bak)=%lu  0x252(range bak)=%lu"
+                              "  → SOC=%.0f%%  range=%.0f",
+                         cnt_total, cnt_257, cnt_118, cnt_33a, cnt_292, cnt_252,
+                         g_state.soc_pct, g_state.range_km);
+                cnt_total = cnt_33a = cnt_292 = cnt_252 = cnt_257 = cnt_118 = 0;
+            }
         } else {
             if ((xTaskGetTickCount() - last_rx_tick) > pdMS_TO_TICKS(2000))
                 g_state.can_ok = false;
