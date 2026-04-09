@@ -222,15 +222,15 @@ void ui_show_dashboard(void)
 
     lbl_soc = lv_label_create(left);
     lv_label_set_text(lbl_soc, "0%");
-    lv_obj_set_style_text_font(lbl_soc, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(lbl_soc, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(lbl_soc, C_GREEN, 0);
-    lv_obj_set_pos(lbl_soc, 0, 170);
-    lv_obj_set_width(lbl_soc, 172);
-    lv_obj_set_style_text_align(lbl_soc, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_set_pos(lbl_soc, 0, 158);
+    lv_obj_set_width(lbl_soc, 180);
+    lv_obj_set_style_text_align(lbl_soc, LV_TEXT_ALIGN_CENTER, 0);
 
     bar_soc = lv_bar_create(left);
-    lv_obj_set_pos(bar_soc, 8, 186);
-    lv_obj_set_size(bar_soc, 164, 14);
+    lv_obj_set_pos(bar_soc, 8, 190);
+    lv_obj_set_size(bar_soc, 164, 10);
     lv_bar_set_range(bar_soc, 0, 100);
     lv_bar_set_value(bar_soc, 0, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(bar_soc, C_DARK_GRAY, LV_PART_MAIN);
