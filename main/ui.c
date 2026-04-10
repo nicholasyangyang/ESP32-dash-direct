@@ -3,6 +3,8 @@
 #include "lvgl.h"
 #include <stdio.h>
 
+LV_FONT_DECLARE(lv_font_speed_120);
+
 /* ── Color palette ─────────────────────────────────────────────────────── */
 #define C_BG        lv_color_hex(0x0d0d0d)
 #define C_WHITE     lv_color_hex(0xffffff)
@@ -14,30 +16,15 @@
 #define C_BLUE      lv_color_hex(0x388bfd)
 #define C_MUTED     lv_color_hex(0x8b949e)
 
+/* 状态栏: font24(24px) + 上下各5px = 34px → 横线在 y=206 */
+#define SPLIT_Y     206
+
 /* ── Widget handles ─────────────────────────────────────────────────────── */
-static lv_obj_t *scr_dash   = NULL;
-
-/* Left panel */
-static lv_obj_t *lbl_speed  = NULL;
-static lv_obj_t *lbl_gear[4]= {NULL};
-
-static lv_obj_t *bar_soc    = NULL;
-static lv_obj_t *lbl_soc    = NULL;
-
-/* Right panel */
-static lv_obj_t *lbl_range_val    = NULL;
-static lv_obj_t *lbl_temp_out_val = NULL;
-static lv_obj_t *lbl_batt_val     = NULL;
-static lv_obj_t *bar_regen        = NULL;
-static lv_obj_t *lbl_regen_val    = NULL;
-
-/* TPMS panel — order: FL, FR, RL, RR */
+static lv_obj_t *scr_dash    = NULL;
+static lv_obj_t *lbl_speed   = NULL;
+static lv_obj_t *lbl_gear[4] = {NULL};
 static lv_obj_t *lbl_tpms[4] = {NULL};
-
-/* Status bar */
 static lv_obj_t *lbl_icon[7] = {NULL};
-
-/* Timer */
 static lv_timer_t *timer_refresh = NULL;
 
 /* ── Gear config ────────────────────────────────────────────────────────── */
@@ -90,7 +77,7 @@ static bool icon_active(int idx)
 
 static lv_color_t tpms_color(float bar)
 {
-    if (bar <= 0.0f)            return C_MUTED;   // no data yet
+    if (bar <= 0.0f)               return C_MUTED;
     if (bar < 2.0f || bar > 3.5f) return C_RED;
     if (bar < 2.5f || bar > 3.1f) return C_ORANGE;
     return C_GREEN;
@@ -102,43 +89,15 @@ static lv_color_t tpms_color(float bar)
 static void ui_refresh(lv_timer_t *t)
 {
     (void)t;
-    char buf[32];
+    char buf[16];
 
     snprintf(buf, sizeof(buf), "%d", (int)g_state.speed_kmh);
     lv_label_set_text(lbl_speed, buf);
 
     for (int i = 0; i < 4; i++) {
-        if (i == g_state.gear) {
-            lv_obj_set_style_text_color(lbl_gear[i], gear_color(i), 0);
-            lv_obj_set_style_text_font(lbl_gear[i], &lv_font_montserrat_24, 0);
-        } else {
-            lv_obj_set_style_text_color(lbl_gear[i], C_DARK_GRAY, 0);
-            lv_obj_set_style_text_font(lbl_gear[i], &lv_font_montserrat_16, 0);
-        }
+        lv_obj_set_style_text_color(lbl_gear[i],
+            (i == g_state.gear) ? gear_color(i) : C_DARK_GRAY, 0);
     }
-
-    lv_bar_set_value(bar_soc, (int)g_state.soc_pct, LV_ANIM_OFF);
-    snprintf(buf, sizeof(buf), "%d%%", (int)g_state.soc_pct);
-    lv_label_set_text(lbl_soc, buf);
-
-    snprintf(buf, sizeof(buf), "%d km", (int)g_state.range_km);
-    lv_label_set_text(lbl_range_val, buf);
-
-    snprintf(buf, sizeof(buf), "%.0f°C", g_state.temp_outside_c);
-    lv_label_set_text(lbl_temp_out_val, buf);
-
-    snprintf(buf, sizeof(buf), "%.0f°C", g_state.batt_max_temp_c);
-    lv_label_set_text(lbl_batt_val, buf);
-
-    // bar_regen: 0–200 kW range, driven by actual max regen power (BMS_powerAvailable)
-    int regen_bar_val = (int)g_state.regen_kw;
-    if (regen_bar_val > 200) regen_bar_val = 200;
-    lv_bar_set_value(bar_regen, regen_bar_val, LV_ANIM_OFF);
-    if (g_state.regen_kw > 0.5f)
-        snprintf(buf, sizeof(buf), "%.0fkW", g_state.regen_kw);
-    else
-        snprintf(buf, sizeof(buf), "--");
-    lv_label_set_text(lbl_regen_val, buf);
 
     for (int i = 0; i < 7; i++) {
         lv_obj_set_style_text_color(lbl_icon[i],
@@ -164,11 +123,23 @@ static void ui_refresh(lv_timer_t *t)
  * ══════════════════════════════════════════════════════════════════════════ */
 void ui_init(void)
 {
-    /* screens built lazily in ui_show_dashboard */
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
- *  ui_show_dashboard
+ *  ui_show_dashboard  —  320×240,  横线在黄金分割点 y=148
+ *
+ *  ┌────────────────────────┬──┬──────────────┐  y=0
+ *  │      speed (font48)    │  │   TPMS       │
+ *  │         km/h           │  │  FL    FR    │
+ *  │    P    R    N    D    │  │  RL    RR    │
+ *  ├────────────────────────┴──┴──────────────┤  y=148  ← φ
+ *  │                                          │
+ *  │      LO  HI  ◄  ►  ⚠  ⚡  AP  (font24)  │
+ *  │                                          │
+ *  └──────────────────────────────────────────┘  y=240
+ *   x=0              x=222 224           x=320
+ *
+ *  Status bar height = 240 - 148 = 92px
  * ══════════════════════════════════════════════════════════════════════════ */
 void ui_show_dashboard(void)
 {
@@ -188,142 +159,48 @@ void ui_show_dashboard(void)
     lv_obj_set_style_border_width(scr_dash, 0, 0);
     lv_obj_set_style_pad_all(scr_dash, 0, 0);
 
-    /* ── Left panel (x=0, w=180, h=210) ─────────────────────────────────── */
+    /* ── Speed + Gear panel (x=0, w=222, h=SPLIT_Y) ─────────────────────── */
     lv_obj_t *left = lv_obj_create(scr_dash);
     lv_obj_set_pos(left, 0, 0);
-    lv_obj_set_size(left, 180, 210);
+    lv_obj_set_size(left, 222, SPLIT_Y);
     lv_obj_set_style_bg_color(left, C_BG, 0);
     lv_obj_set_style_bg_opa(left, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(left, 0, 0);
     lv_obj_set_style_pad_all(left, 0, 0);
     lv_obj_clear_flag(left, LV_OBJ_FLAG_SCROLLABLE);
 
+    /* Speed number — 120px font, vertically centered in 0..167 area */
+    /* font line_height=89, gear row at y=168 → center_y=(168-89)/2=39 */
     lbl_speed = lv_label_create(left);
     lv_label_set_text(lbl_speed, "0");
-    lv_obj_set_style_text_font(lbl_speed, &lv_font_montserrat_48, 0);
+    lv_obj_set_style_text_font(lbl_speed, &lv_font_speed_120, 0);
     lv_obj_set_style_text_color(lbl_speed, C_WHITE, 0);
-    lv_obj_set_pos(lbl_speed, 0, 20);
-    lv_obj_set_width(lbl_speed, 180);
+    lv_obj_set_pos(lbl_speed, 0, 39);
+    lv_obj_set_width(lbl_speed, 222);
     lv_obj_set_style_text_align(lbl_speed, LV_TEXT_ALIGN_CENTER, 0);
 
-    lv_obj_t *lbl_unit = lv_label_create(left);
-    lv_label_set_text(lbl_unit, "km/h");
-    lv_obj_set_style_text_font(lbl_unit, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(lbl_unit, C_MUTED, 0);
-    lv_obj_set_pos(lbl_unit, 130, 82);
-
+    /* Gear P / R / N / D — font24, evenly spaced */
     for (int i = 0; i < 4; i++) {
         lbl_gear[i] = lv_label_create(left);
         lv_label_set_text(lbl_gear[i], gear_names[i]);
-        lv_obj_set_style_text_font(lbl_gear[i], &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_font(lbl_gear[i], &lv_font_montserrat_24, 0);
         lv_obj_set_style_text_color(lbl_gear[i], C_DARK_GRAY, 0);
-        lv_obj_set_pos(lbl_gear[i], 22 + i * 45 - 8, 132);
+        lv_obj_set_pos(lbl_gear[i], 14 + i * 52, 168);
     }
 
-    lbl_soc = lv_label_create(left);
-    lv_label_set_text(lbl_soc, "0%");
-    lv_obj_set_style_text_font(lbl_soc, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(lbl_soc, C_GREEN, 0);
-    lv_obj_set_pos(lbl_soc, 0, 158);
-    lv_obj_set_width(lbl_soc, 180);
-    lv_obj_set_style_text_align(lbl_soc, LV_TEXT_ALIGN_CENTER, 0);
+    /* ── Vertical separator ─────────────────────────────────────────────── */
+    lv_obj_t *vsep = lv_obj_create(scr_dash);
+    lv_obj_set_pos(vsep, 222, 0);
+    lv_obj_set_size(vsep, 2, SPLIT_Y);
+    lv_obj_set_style_bg_color(vsep, C_DARK_GRAY, 0);
+    lv_obj_set_style_bg_opa(vsep, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(vsep, 0, 0);
+    lv_obj_set_style_pad_all(vsep, 0, 0);
 
-    bar_soc = lv_bar_create(left);
-    lv_obj_set_pos(bar_soc, 8, 190);
-    lv_obj_set_size(bar_soc, 164, 10);
-    lv_bar_set_range(bar_soc, 0, 100);
-    lv_bar_set_value(bar_soc, 0, LV_ANIM_OFF);
-    lv_obj_set_style_bg_color(bar_soc, C_DARK_GRAY, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(bar_soc, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(bar_soc, C_GREEN, LV_PART_INDICATOR);
-    lv_obj_set_style_bg_opa(bar_soc, LV_OPA_COVER, LV_PART_INDICATOR);
-    lv_obj_set_style_radius(bar_soc, 4, LV_PART_MAIN);
-    lv_obj_set_style_radius(bar_soc, 4, LV_PART_INDICATOR);
-
-    /* ── Right panel (x=182, w=76, h=210) ───────────────────────────────── */
-    lv_obj_t *right = lv_obj_create(scr_dash);
-    lv_obj_set_pos(right, 182, 0);
-    lv_obj_set_size(right, 76, 210);
-    lv_obj_set_style_bg_color(right, C_BG, 0);
-    lv_obj_set_style_bg_opa(right, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(right, 0, 0);
-    lv_obj_set_style_pad_all(right, 0, 0);
-    lv_obj_clear_flag(right, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t *lbl_range_key = lv_label_create(right);
-    lv_label_set_text(lbl_range_key, "Range");
-    lv_obj_set_style_text_font(lbl_range_key, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(lbl_range_key, C_MUTED, 0);
-    lv_obj_set_pos(lbl_range_key, 4, 4);
-
-    lbl_range_val = lv_label_create(right);
-    lv_label_set_text(lbl_range_val, "--- km");
-    lv_obj_set_style_text_font(lbl_range_val, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(lbl_range_val, C_WHITE, 0);
-    lv_obj_set_pos(lbl_range_val, 4, 20);
-
-    lv_obj_t *lbl_temp_out_key = lv_label_create(right);
-    lv_label_set_text(lbl_temp_out_key, "OutTemp");
-    lv_obj_set_style_text_font(lbl_temp_out_key, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(lbl_temp_out_key, C_MUTED, 0);
-    lv_obj_set_pos(lbl_temp_out_key, 4, 56);
-
-    lbl_temp_out_val = lv_label_create(right);
-    lv_label_set_text(lbl_temp_out_val, "--°C");
-    lv_obj_set_style_text_font(lbl_temp_out_val, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(lbl_temp_out_val, C_WHITE, 0);
-    lv_obj_set_pos(lbl_temp_out_val, 4, 72);
-
-    lv_obj_t *lbl_batt_key = lv_label_create(right);
-    lv_label_set_text(lbl_batt_key, "BattTemp");
-    lv_obj_set_style_text_font(lbl_batt_key, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(lbl_batt_key, C_MUTED, 0);
-    lv_obj_set_pos(lbl_batt_key, 4, 108);
-
-    lbl_batt_val = lv_label_create(right);
-    lv_label_set_text(lbl_batt_val, "--°C");
-    lv_obj_set_style_text_font(lbl_batt_val, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(lbl_batt_val, C_WHITE, 0);
-    lv_obj_set_pos(lbl_batt_val, 4, 124);
-
-    lv_obj_t *lbl_regen_key = lv_label_create(right);
-    lv_label_set_text(lbl_regen_key, LV_SYMBOL_LEFT " Regen");
-    lv_obj_set_style_text_font(lbl_regen_key, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(lbl_regen_key, C_MUTED, 0);
-    lv_obj_set_pos(lbl_regen_key, 4, 156);
-
-    lbl_regen_val = lv_label_create(right);
-    lv_label_set_text(lbl_regen_val, "--");
-    lv_obj_set_style_text_font(lbl_regen_val, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(lbl_regen_val, C_GREEN, 0);
-    lv_obj_set_pos(lbl_regen_val, 4, 170);
-
-    bar_regen = lv_bar_create(right);
-    lv_obj_set_pos(bar_regen, 4, 186);
-    lv_obj_set_size(bar_regen, 64, 14);
-    lv_bar_set_range(bar_regen, 0, 200);  // 0–200 kW
-    lv_bar_set_value(bar_regen, 0, LV_ANIM_OFF);
-    lv_obj_set_style_bg_color(bar_regen, C_DARK_GRAY, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(bar_regen, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_radius(bar_regen, 4, LV_PART_MAIN);
-    lv_obj_set_style_radius(bar_regen, 4, LV_PART_INDICATOR);
-    lv_obj_set_style_bg_color(bar_regen, C_GREEN, LV_PART_INDICATOR);
-    lv_obj_set_style_bg_opa(bar_regen, LV_OPA_COVER, LV_PART_INDICATOR);
-    lv_obj_set_style_bg_grad_color(bar_regen, C_BLUE, LV_PART_INDICATOR);
-    lv_obj_set_style_bg_grad_dir(bar_regen, LV_GRAD_DIR_HOR, LV_PART_INDICATOR);
-
-    /* ── TPMS vertical strip (x=260, w=60, h=210) ───────────────────────── */
-    lv_obj_t *tpms_sep = lv_obj_create(scr_dash);
-    lv_obj_set_pos(tpms_sep, 258, 0);
-    lv_obj_set_size(tpms_sep, 2, 210);
-    lv_obj_set_style_bg_color(tpms_sep, C_DARK_GRAY, 0);
-    lv_obj_set_style_bg_opa(tpms_sep, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(tpms_sep, 0, 0);
-    lv_obj_set_style_pad_all(tpms_sep, 0, 0);
-
+    /* ── TPMS panel (x=224, w=96, h=SPLIT_Y) ───────────────────────────── */
     lv_obj_t *tpms = lv_obj_create(scr_dash);
-    lv_obj_set_pos(tpms, 260, 0);
-    lv_obj_set_size(tpms, 60, 210);
+    lv_obj_set_pos(tpms, 224, 0);
+    lv_obj_set_size(tpms, 96, SPLIT_Y);
     lv_obj_set_style_bg_color(tpms, C_BG, 0);
     lv_obj_set_style_bg_opa(tpms, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(tpms, 0, 0);
@@ -334,41 +211,32 @@ void ui_show_dashboard(void)
     lv_label_set_text(lbl_tpms_hdr, "TPMS");
     lv_obj_set_style_text_font(lbl_tpms_hdr, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(lbl_tpms_hdr, C_MUTED, 0);
-    lv_obj_set_pos(lbl_tpms_hdr, 0, 6);
-    lv_obj_set_width(lbl_tpms_hdr, 60);
+    lv_obj_set_pos(lbl_tpms_hdr, 0, 4);
+    lv_obj_set_width(lbl_tpms_hdr, 96);
     lv_obj_set_style_text_align(lbl_tpms_hdr, LV_TEXT_ALIGN_CENTER, 0);
 
     lv_obj_t *lbl_tpms_unit = lv_label_create(tpms);
     lv_label_set_text(lbl_tpms_unit, "bar");
     lv_obj_set_style_text_font(lbl_tpms_unit, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(lbl_tpms_unit, C_DARK_GRAY, 0);
-    lv_obj_set_pos(lbl_tpms_unit, 0, 22);
-    lv_obj_set_width(lbl_tpms_unit, 60);
+    lv_obj_set_pos(lbl_tpms_unit, 0, 18);
+    lv_obj_set_width(lbl_tpms_unit, 96);
     lv_obj_set_style_text_align(lbl_tpms_unit, LV_TEXT_ALIGN_CENTER, 0);
 
-    /* Front axle label — short enough to fit 60px on one line */
     lv_obj_t *lbl_front = lv_label_create(tpms);
     lv_label_set_text(lbl_front, "Front");
     lv_label_set_long_mode(lbl_front, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_font(lbl_front, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(lbl_front, C_DARK_GRAY, 0);
     lv_obj_set_pos(lbl_front, 0, 42);
-    lv_obj_set_width(lbl_front, 60);
+    lv_obj_set_width(lbl_front, 96);
     lv_obj_set_style_text_align(lbl_front, LV_TEXT_ALIGN_CENTER, 0);
 
-    /* FL / FR / RL / RR labels and values
-     * Layout (each row 16px line-height):
-     *  y=42  "Front"
-     *  y=60  FL(x=2)   FR(x=32)   ← position label
-     *  y=76  val(x=2)  val(x=32)  ← pressure value
-     *  y=108 "Rear"
-     *  y=126 RL(x=2)   RR(x=32)
-     *  y=142 val(x=2)  val(x=32)
-     */
+    /* FL=col0 x=6, FR=col1 x=52; RL=col0, RR=col1 */
     static const char *tpms_pos[4]   = {"FL", "FR", "RL", "RR"};
-    static const int   tpms_x[4]     = {2, 32, 2, 32};
-    static const int   tpms_y_lbl[4] = {60, 60, 126, 126};
-    static const int   tpms_y_val[4] = {76, 76, 142, 142};
+    static const int   tpms_x[4]     = {6, 52, 6, 52};
+    static const int   tpms_y_lbl[4] = {56, 56, 130, 130};
+    static const int   tpms_y_val[4] = {70, 70, 144, 144};
 
     for (int i = 0; i < 4; i++) {
         lv_obj_t *lbl_pos = lv_label_create(tpms);
@@ -377,51 +245,53 @@ void ui_show_dashboard(void)
         lv_obj_set_style_text_font(lbl_pos, &lv_font_montserrat_12, 0);
         lv_obj_set_style_text_color(lbl_pos, C_MUTED, 0);
         lv_obj_set_pos(lbl_pos, tpms_x[i], tpms_y_lbl[i]);
-        lv_obj_set_width(lbl_pos, 28);
+        lv_obj_set_width(lbl_pos, 38);
 
         lbl_tpms[i] = lv_label_create(tpms);
         lv_label_set_text(lbl_tpms[i], "--");
         lv_label_set_long_mode(lbl_tpms[i], LV_LABEL_LONG_CLIP);
-        lv_obj_set_style_text_font(lbl_tpms[i], &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_font(lbl_tpms[i], &lv_font_montserrat_16, 0);
         lv_obj_set_style_text_color(lbl_tpms[i], C_MUTED, 0);
         lv_obj_set_pos(lbl_tpms[i], tpms_x[i], tpms_y_val[i]);
-        lv_obj_set_width(lbl_tpms[i], 28);
+        lv_obj_set_width(lbl_tpms[i], 38);
     }
 
-    /* Rear axle label */
     lv_obj_t *lbl_rear = lv_label_create(tpms);
     lv_label_set_text(lbl_rear, "Rear");
     lv_label_set_long_mode(lbl_rear, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_font(lbl_rear, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(lbl_rear, C_DARK_GRAY, 0);
-    lv_obj_set_pos(lbl_rear, 0, 108);
-    lv_obj_set_width(lbl_rear, 60);
+    lv_obj_set_pos(lbl_rear, 0, 114);
+    lv_obj_set_width(lbl_rear, 96);
     lv_obj_set_style_text_align(lbl_rear, LV_TEXT_ALIGN_CENTER, 0);
 
-    /* ── Status bar (y=210, h=30) ────────────────────────────────────────── */
-    lv_obj_t *sep = lv_obj_create(scr_dash);
-    lv_obj_set_pos(sep, 0, 210);
-    lv_obj_set_size(sep, 320, 1);
-    lv_obj_set_style_bg_color(sep, C_DARK_GRAY, 0);
-    lv_obj_set_style_bg_opa(sep, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(sep, 0, 0);
-    lv_obj_set_style_pad_all(sep, 0, 0);
+    /* ── 黄金分割横线 (y=SPLIT_Y) ────────────────────────────────────────── */
+    lv_obj_t *hsep = lv_obj_create(scr_dash);
+    lv_obj_set_pos(hsep, 0, SPLIT_Y);
+    lv_obj_set_size(hsep, 320, 1);
+    lv_obj_set_style_bg_color(hsep, C_DARK_GRAY, 0);
+    lv_obj_set_style_bg_opa(hsep, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(hsep, 0, 0);
+    lv_obj_set_style_pad_all(hsep, 0, 0);
 
+    /* ── Status bar (y=SPLIT_Y+1, h=240-SPLIT_Y-1=91) ───────────────────── */
+    /* 图标用 font24，垂直居中于 91px 区域 */
     lv_obj_t *status = lv_obj_create(scr_dash);
-    lv_obj_set_pos(status, 0, 211);
-    lv_obj_set_size(status, 320, 29);
+    lv_obj_set_pos(status, 0, SPLIT_Y + 1);
+    lv_obj_set_size(status, 320, 240 - SPLIT_Y - 1);
     lv_obj_set_style_bg_color(status, C_BG, 0);
     lv_obj_set_style_bg_opa(status, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(status, 0, 0);
     lv_obj_set_style_pad_all(status, 0, 0);
     lv_obj_clear_flag(status, LV_OBJ_FLAG_SCROLLABLE);
 
+    /* icon_y: center font24 (24px) in 33px → (33-24)/2 = 4 → use 5 */
     for (int i = 0; i < 7; i++) {
         lbl_icon[i] = lv_label_create(status);
         lv_label_set_text(lbl_icon[i], icon_text[i]);
-        lv_obj_set_style_text_font(lbl_icon[i], &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_font(lbl_icon[i], &lv_font_montserrat_24, 0);
         lv_obj_set_style_text_color(lbl_icon[i], C_DARK_GRAY, 0);
-        lv_obj_set_pos(lbl_icon[i], (int)(320 * i / 7 + 320 / 14 - 8), 5);
+        lv_obj_set_pos(lbl_icon[i], (int)(320 * i / 7 + 320 / 14 - 10), 5);
     }
 
     lv_scr_load(scr_dash);

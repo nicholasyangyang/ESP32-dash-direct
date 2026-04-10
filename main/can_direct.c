@@ -14,50 +14,14 @@ dashboard_state_t g_state = {0};
 // ── Frame parsing — HW4, joshwardell/model3dbc + tesla-can-explorer ──────
 //
 // 0x257  DI_speed (599):
-//        DI_speedChecksum  :  0| 8@1+  (1,0)
-//        DI_speedCounter   :  8| 4@1+  (1,0)
-//        DI_vehicleSpeed   : 12|12@1+  (0.08,-40)  kph  ← precise
-//        DI_uiSpeed        : 24| 8@1+  (1,0)             UI integer
-//        DI_uiSpeedUnits   : 32| 1@1+  (1,0)        0=mph 1=kph
+//        DI_uiSpeed        : 24|9@1+  (1,0)   UI integer
+//        DI_uiSpeedUnits   : 33|1@1+           0=mph 1=kph
 //
 // 0x118  DI_systemStatus (280):
 //        DI_gear           : 21|3@1+  (1,0)  0=SNA 1=P 2=R 3=N 4=D
 //
-// 0x33A  UI_range (826)  ← 续航里程 + 电量百分比
-//        UI_Range          :  0|10@1+  (1,0)  "mi"  UI rated range
-//        UI_idealRange     : 16|10@1+  (1,0)  "mi"  ideal range
-//        UI_ratedWHpM      : 32|10@1+  (1,0)  "WHpM"
-//        UI_SOC            : 48| 7@1+  (1,0)  "%"   ← display SOC integer
-//        UI_uSOE           : 56| 7@1+  (1,0)  "%"
-//
-// 0x292  BMS_socStatus (658)  ← 电量百分比 backup
-//        SOCmin292         :  0|10@1+  (0.1,0) "%"
-//        SOCUI292          : 10|10@1+  (0.1,0) "%"   ← display SOC (0.1% res)
-//        SOCmax292         : 20|10@1+  (0.1,0) "%"
-//        SOCave292         : 30|10@1+  (0.1,0) "%"
-//        BattBeginningOfLifeEnergy292 : 40|10@1+ (0.1,0) "kWh"
-//        BMS_battTempPct   : 50| 8@1+  (0.4,0) "%"
-//
-// 0x252  BMS_powerAvailable (594)  ← 能量回收
-//        BMS_maxRegenPower      :  0|16@1+  (0.01,0)  [0|655.35] "kW"  ← 回收
-//        BMS_maxDischargePower  : 16|16@1+  (0.013,0) [0|655.35] "kW"
-//        BMS_maxStationaryHeatPower : 32|10@1+ (0.01,0) "kW"
-//        BMS_notEnoughPowerForHeatPump : 42|1@1+
-//        BMS_powerLimitsState   : 48| 1@1+  0=not_calc 1=calc_for_drive
-//
 // 0x212  BMS_status (530):
 //        BMS_chargeRequest  : 29|1@1+           ← charging flag
-//
-// 0x321  VCFRONT_sensors (801):
-//        VCFRONT_tempAmbient         : 24|8@1+  (0.5,-40) "C"  ← 车外温度
-//        VCFRONT_tempAmbientFiltered : 40|8@1+  (0.5,-40) "C"
-//
-// 0x312  BMS_packStatus (786):
-//        BMSmaxPackTemperature : 53|9@1+ (0.25,-25) "C"
-//
-// 0x334  UI_powertrainControl (820)  ← 能量回收设定
-//        UI_regenTorqueMax : 24|8@1+  (0.5,0) [0|100] "%"  ← byte[3]
-//        UI_stoppingMode   : 40|2@1+  0=STANDARD 1=CREEP 2=HOLD
 //
 // 0x3F5  VCFRONT_vehicleLights (1013):
 //        VCFRONT_indicatorLeftRequest  :  0|2@1+  (1=on)
@@ -105,80 +69,11 @@ static void parse_frame(uint32_t id, uint8_t dlc, const uint8_t *d)
         }
         break;
 
-    // ── 续航里程 + SOC UI 显示值 ──────────────────────────────────────────
-    // 0x33A  ID33AUI_rangeSOC (decimal 826):
-    //   UI_Range      :  0|10@1+ (1,0)  → 仪表显示里程（与车辆单位一致 km/mi）
-    //   UI_idealRange : 16|10@1+ (1,0)  → 理想里程
-    //   UI_SOC        : 48| 7@1+ (1,0) "%"  → 显示电量整数 0-100
-    case 0x33A:
-        if (dlc >= 7) {
-            uint16_t raw_range = (uint16_t)d[0] | ((uint16_t)(d[1] & 0x03) << 8);
-            uint8_t  raw_soc   = d[6] & 0x7F;
-            if (raw_range > 0)
-                g_state.range_km = (float)raw_range;
-            if (raw_soc > 0)
-                g_state.soc_pct = (float)raw_soc;
-            ESP_LOGI(TAG, "0x33A range=%u(%.0f) soc=%u%%  [%02X %02X .. %02X %02X]",
-                     raw_range, g_state.range_km, raw_soc,
-                     d[0], d[1], d[6], d[7]);
-        }
-        break;
-
-    // ── 电池 SOC (备用: 0x292 BMS_SOC) ───────────────────────────────────
-    // SOCUI292 : 10|10@1+ (0.1,0) — HW4 可能不广播此帧
-    case 0x292:
-        if (dlc >= 3) {
-            uint16_t raw_ui = (uint16_t)((d[1] >> 2) & 0x3F)
-                            | ((uint16_t)(d[2] & 0x0F) << 6);
-            if (raw_ui > 0 && g_state.soc_pct == 0.0f)
-                g_state.soc_pct = raw_ui * 0.1f;
-            ESP_LOGI(TAG, "0x292 SOCui_raw=%u → %.1f%%  [%02X %02X %02X]",
-                     raw_ui, raw_ui * 0.1f, d[0], d[1], d[2]);
-        }
-        break;
-
-    // ── 最大回收功率 (能量回收): 0x252 BMS_powerAvailable ─────────────────
-    // BMS_maxRegenPower     :  0|16@1+ (0.01,0) [0|655.35] "kW"  ← bytes[0-1]
-    // BMS_maxDischargePower : 16|16@1+ (0.013,0)           "kW"  ← bytes[2-3]
-    case 0x252:
-        if (dlc >= 2) {
-            uint16_t raw_regen = (uint16_t)d[0] | ((uint16_t)d[1] << 8);
-            g_state.regen_kw = raw_regen * 0.01f;
-            ESP_LOGD(TAG, "0x252 maxRegenPower_raw=%u → %.1f kW  [%02X %02X]",
-                     raw_regen, g_state.regen_kw, d[0], d[1]);
-        }
-        break;
-
     // ── 充电状态 ──────────────────────────────────────────────────────────
     case 0x212:
         // BMS_chargeRequest : 29|1 → bit29 = byte3.bit5
         if (dlc >= 4)
             g_state.charging = (d[3] >> 5) & 0x01;
-        break;
-
-    // ── 车外温度 ──────────────────────────────────────────────────────────
-    case 0x321:
-        // VCFRONT_sensors (dec 801): VCFRONT_tempAmbient : 24|8@1+ (0.5,-40) "C"
-        if (dlc >= 4)
-            g_state.temp_outside_c = d[3] * 0.5f - 40.0f;
-        break;
-
-    // ── 电池最高温度 ──────────────────────────────────────────────────────
-    case 0x312:
-        // BMSmaxPackTemperature : 53|9@1+ (0.25,-25) "C"
-        // bit53 = byte6.bit5 → 3位来自byte6[7:5], 6位来自byte7[5:0]
-        if (dlc >= 8) {
-            uint16_t raw = (uint16_t)((d[6] >> 5) & 0x07)
-                         | ((uint16_t)(d[7] & 0x3F) << 3);
-            g_state.batt_max_temp_c = raw * 0.25f - 25.0f;
-        }
-        break;
-
-    // ── 回收强度 ──────────────────────────────────────────────────────────
-    case 0x334:
-        // UI_regenTorqueMax : 24|8@1+ (0.5,0) "%" → byte[3]
-        if (dlc >= 4)
-            g_state.regen_pct = d[3] * 0.5f;
         break;
 
     // ── 灯光状态 ──────────────────────────────────────────────────────────
@@ -256,18 +151,14 @@ static void can_rx_task(void *arg)
     (void)arg;
     uint32_t last_rx_tick  = 0;
     uint32_t last_stat_tick = 0;
-    uint32_t cnt_total = 0, cnt_33a = 0, cnt_292 = 0, cnt_252 = 0, cnt_257 = 0, cnt_118 = 0, cnt_334 = 0;
+    uint32_t cnt_total = 0, cnt_257 = 0, cnt_118 = 0;
 
     for (;;) {
         twai_message_t msg;
         if (twai_receive(&msg, pdMS_TO_TICKS(200)) == ESP_OK) {
             cnt_total++;
-            if (msg.identifier == 0x33A) cnt_33a++;
-            if (msg.identifier == 0x292) cnt_292++;
-            if (msg.identifier == 0x252) cnt_252++;
             if (msg.identifier == 0x257) cnt_257++;
             if (msg.identifier == 0x118) cnt_118++;
-            if (msg.identifier == 0x334) cnt_334++;
             parse_frame(msg.identifier, msg.data_length_code, msg.data);
             last_rx_tick   = xTaskGetTickCount();
             g_state.can_ok = true;
@@ -277,13 +168,10 @@ static void can_rx_task(void *arg)
             if ((now - last_stat_tick) >= pdMS_TO_TICKS(5000)) {
                 last_stat_tick = now;
                 ESP_LOGI(TAG, "CAN stats: total=%lu  0x257=%lu  0x118=%lu"
-                              "  0x33A(range+SOC)=%lu  0x292(SOC bak)=%lu"
-                              "  0x252(regenPow)=%lu  0x334(regenSet)=%lu"
-                              "  → SOC=%.0f%%  range=%.0f  regenPow=%.1fkW  regenSet=%.0f%%",
-                         cnt_total, cnt_257, cnt_118, cnt_33a, cnt_292, cnt_252, cnt_334,
-                         g_state.soc_pct, g_state.range_km,
-                         g_state.regen_kw, g_state.regen_pct);
-                cnt_total = cnt_33a = cnt_292 = cnt_252 = cnt_257 = cnt_118 = cnt_334 = 0;
+                              "  → speed=%.0f  gear=%u",
+                         cnt_total, cnt_257, cnt_118,
+                         g_state.speed_kmh, g_state.gear);
+                cnt_total = cnt_257 = cnt_118 = 0;
             }
         } else {
             if ((xTaskGetTickCount() - last_rx_tick) > pdMS_TO_TICKS(2000))
